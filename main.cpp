@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <limits>
+#include <fstream>
 
 struct Book {
     int id;
@@ -17,10 +18,100 @@ struct Member {
     int borrowedCount = 0;
 };
 
+bool loadData(std::vector<Book>& books, std::vector<Member>& members) {
+    std::ifstream input("library_data.txt");
+    if (!input) {
+        std::cout << "No saved library data found. Starting with an empty library.\n";
+        return true;
+    }
+
+    std::string section;
+    int count;
+    if (!(input >> section >> count) || section != "BOOKS" || count < 0) {
+        std::cerr << "Could not read the saved books in library_data.txt.\n";
+        return false;
+    }
+    input.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+    for (int i = 0; i < count; ++i) {
+        Book book{};
+        if (!(input >> book.id >> book.totalCopies >> book.availableCopies) ||
+            book.totalCopies < 1 || book.availableCopies < 0 ||
+            book.availableCopies > book.totalCopies) {
+            std::cerr << "Invalid book data in library_data.txt.\n";
+            return false;
+        }
+        input.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        if (!std::getline(input, book.title) || !std::getline(input, book.author)) {
+            std::cerr << "Invalid book text in library_data.txt.\n";
+            return false;
+        }
+        books.push_back(book);
+    }
+
+    if (!(input >> section >> count) || section != "MEMBERS" || count < 0) {
+        std::cerr << "Could not read the saved members in library_data.txt.\n";
+        return false;
+    }
+    input.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+    for (int i = 0; i < count; ++i) {
+        Member member{};
+        if (!(input >> member.id >> member.borrowedCount) || member.borrowedCount < 0) {
+            std::cerr << "Invalid member data in library_data.txt.\n";
+            return false;
+        }
+        input.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        if (!std::getline(input, member.name)) {
+            std::cerr << "Invalid member name in library_data.txt.\n";
+            return false;
+        }
+        members.push_back(member);
+    }
+
+    if (input >> section) {
+        std::cerr << "Unexpected extra data in library_data.txt.\n";
+        return false;
+    }
+
+    return true;
+}
+
+bool saveData(const std::vector<Book>& books, const std::vector<Member>& members) {
+    std::ofstream output("library_data.txt");
+    if (!output) {
+        std::cerr << "Could not open library_data.txt for saving.\n";
+        return false;
+    }
+
+    output << "BOOKS " << books.size() << '\n';
+    for (const Book& book : books) {
+        output << book.id << ' ' << book.totalCopies << ' ' << book.availableCopies
+               << '\n' << book.title << '\n' << book.author << '\n';
+    }
+
+    output << "MEMBERS " << members.size() << '\n';
+    for (const Member& member : members) {
+        output << member.id << ' ' << member.borrowedCount
+               << '\n' << member.name << '\n';
+    }
+
+    if (!output) {
+        std::cerr << "Failed while writing library_data.txt.\n";
+        return false;
+    }
+
+    return true;
+}
+
 int main() {
     std::vector<Book> books;
     std::vector<Member> members;
     int choice = 0;
+
+    if (!loadData(books, members)) {
+        return 1;
+    }
 
     while (choice != 7) {
         std::cout << "\n=== Library Management System ===\n"
@@ -136,6 +227,10 @@ int main() {
         }
     }
 
-    std::cout << "Goodbye!\n";
+    if (!saveData(books, members)) {
+        return 1;
+    }
+
+    std::cout << "Library data saved.\nGoodbye!\n";
     return 0;
 }
