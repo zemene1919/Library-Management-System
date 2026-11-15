@@ -4,6 +4,10 @@
 #include <limits>
 #include <fstream>
 
+const int MAX_BORROWED_BOOKS = 3;
+const int MAX_LOAN_DAYS = 5;
+const int FINE_PER_LATE_DAY = 10;
+
 struct Book {
     int id;
     std::string title;
@@ -18,7 +22,30 @@ struct Member {
     int borrowedCount = 0;
 };
 
-bool loadData(std::vector<Book>& books, std::vector<Member>& members) {
+struct Loan {
+    int memberId;
+    int bookId;
+};
+
+bool confirmOperation() {
+    char confirmation;
+    std::cout << "Keep this operation? Enter n to reset/cancel it (y/n): ";
+    if (!(std::cin >> confirmation)) {
+        std::cin.clear();
+        std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+        std::cout << "Operation cancelled.\n";
+        return false;
+    }
+    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    if (confirmation != 'y' && confirmation != 'Y') {
+        std::cout << "Operation cancelled. No changes were made.\n";
+        return false;
+    }
+    return true;
+}
+
+bool loadData(std::vector<Book>& books, std::vector<Member>& members,
+              std::vector<Loan>& loans) {
     std::ifstream input("library_data.txt");
     if (!input) {
         std::cout << "No saved library data found. Starting with an empty library.\n";
@@ -70,6 +97,21 @@ bool loadData(std::vector<Book>& books, std::vector<Member>& members) {
     }
 
     if (input >> section) {
+        if (section != "LOANS" || !(input >> count) || count < 0) {
+            std::cerr << "Could not read the saved loans in library_data.txt.\n";
+            return false;
+        }
+        for (int i = 0; i < count; ++i) {
+            Loan loan{};
+            if (!(input >> loan.memberId >> loan.bookId)) {
+                std::cerr << "Invalid loan data in library_data.txt.\n";
+                return false;
+            }
+            loans.push_back(loan);
+        }
+    }
+
+    if (input >> section) {
         std::cerr << "Unexpected extra data in library_data.txt.\n";
         return false;
     }
@@ -77,7 +119,8 @@ bool loadData(std::vector<Book>& books, std::vector<Member>& members) {
     return true;
 }
 
-bool saveData(const std::vector<Book>& books, const std::vector<Member>& members) {
+bool saveData(const std::vector<Book>& books, const std::vector<Member>& members,
+              const std::vector<Loan>& loans) {
     std::ofstream output("library_data.txt");
     if (!output) {
         std::cerr << "Could not open library_data.txt for saving.\n";
@@ -96,6 +139,11 @@ bool saveData(const std::vector<Book>& books, const std::vector<Member>& members
                << '\n' << member.name << '\n';
     }
 
+    output << "LOANS " << loans.size() << '\n';
+    for (const Loan& loan : loans) {
+        output << loan.memberId << ' ' << loan.bookId << '\n';
+    }
+
     if (!output) {
         std::cerr << "Failed while writing library_data.txt.\n";
         return false;
@@ -107,14 +155,19 @@ bool saveData(const std::vector<Book>& books, const std::vector<Member>& members
 int main() {
     std::vector<Book> books;
     std::vector<Member> members;
+    std::vector<Loan> loans;
     int choice = 0;
 
-    if (!loadData(books, members)) {
+    if (!loadData(books, members, loans)) {
         return 1;
     }
 
     while (choice != 7) {
         std::cout << "\n=== Library Management System ===\n"
+                  << "Loan period: " << MAX_LOAN_DAYS
+                  << " days | Late fee: " << FINE_PER_LATE_DAY
+                  << " birr/day | Book limit per member: "
+                  << MAX_BORROWED_BOOKS << '\n'
                   << "1. Add book\n"
                   << "2. Show books\n"
                   << "3. Register member\n"
@@ -148,7 +201,7 @@ int main() {
 
             if (book.totalCopies < 1) {
                 std::cout << "Copies must be at least 1.\n";
-            } else {
+            } else if (confirmOperation()) {
                 book.availableCopies = book.totalCopies;
                 books.push_back(book);
                 std::cout << "Book added.\n";
@@ -172,8 +225,10 @@ int main() {
             std::cout << "Member name: ";
             std::getline(std::cin, member.name);
 
-            members.push_back(member);
-            std::cout << "Member registered.\n";
+            if (confirmOperation()) {
+                members.push_back(member);
+                std::cout << "Member registered.\n";
+            }
         } else if (choice == 4 || choice == 5) {
             int memberId, bookId;
             std::cout << "Member ID: ";
@@ -195,22 +250,68 @@ int main() {
             if (member == members.end() || book == books.end()) {
                 std::cout << "Member or book not found.\n";
             } else if (choice == 4) {
-                if (member->borrowedCount >= 3) {
-                    std::cout << "This member already has 3 books.\n";
+                if (member->borrowedCount >= MAX_BORROWED_BOOKS) {
+                    std::cout << "This member already has the maximum of "
+                              << MAX_BORROWED_BOOKS << " books.\n";
                 } else if (book->availableCopies == 0) {
                     std::cout << "No copies are currently available.\n";
-                } else {
+                } else if (confirmOperation()) {
                     --book->availableCopies;
                     ++member->borrowedCount;
+                    loans.push_back({memberId, bookId});
                     std::cout << "Book borrowed.\n";
                 }
-            } else if (member->borrowedCount == 0 ||
-                       book->availableCopies == book->totalCopies) {
-                std::cout << "No matching borrowed copy was found.\n";
             } else {
-                ++book->availableCopies;
-                --member->borrowedCount;
-                std::cout << "Book returned.\n";
+                long long daysKept;
+                std::cout << "Days the student kept the book: ";
+                if (!(std::cin >> daysKept) || daysKept < 0 ||
+                    daysKept > std::numeric_limits<long long>::max() /
+                                   FINE_PER_LATE_DAY + MAX_LOAN_DAYS) {
+                    std::cout << "Enter a non-negative number of days within the supported range.\n";
+                    std::cin.clear();
+                    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+                    continue;
+                }
+                std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+
+                auto loan = loans.begin();
+                while (loan != loans.end() &&
+                       (loan->memberId != memberId || loan->bookId != bookId)) {
+                    ++loan;
+                }
+
+                int knownLoans = 0;
+                for (const Loan& recordedLoan : loans) {
+                    if (recordedLoan.memberId == memberId) {
+                        ++knownLoans;
+                    }
+                }
+                const bool legacyLoan = loan == loans.end() &&
+                    knownLoans < member->borrowedCount &&
+                    book->availableCopies < book->totalCopies;
+
+                if (loan == loans.end() && !legacyLoan) {
+                    std::cout << "No matching borrowed copy was found.\n";
+                } else if (confirmOperation()) {
+                    if (loan != loans.end()) {
+                        loans.erase(loan);
+                    }
+                    ++book->availableCopies;
+                    --member->borrowedCount;
+
+                    const long long lateDays =
+                        daysKept > MAX_LOAN_DAYS ? daysKept - MAX_LOAN_DAYS : 0;
+                    const long long fine = lateDays * FINE_PER_LATE_DAY;
+                    std::cout << "Book returned. Late fee: " << fine << " birr";
+                    if (lateDays > 0) {
+                        std::cout << " (" << lateDays << " late day(s) at "
+                                  << FINE_PER_LATE_DAY << " birr per day)";
+                    }
+                    std::cout << ".\n";
+                    if (legacyLoan) {
+                        std::cout << "This was an older loan without a saved book record.\n";
+                    }
+                }
             }
         } else if (choice == 6) {
             if (members.empty()) {
@@ -227,7 +328,7 @@ int main() {
         }
     }
 
-    if (!saveData(books, members)) {
+    if (!saveData(books, members, loans)) {
         return 1;
     }
 
